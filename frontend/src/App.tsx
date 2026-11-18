@@ -23,10 +23,17 @@ function AppContent() {
       <Sidebar
         selectedId={selectedDoc?.id ?? null}
         onSelect={(id, name) => setSelectedDoc({ id, name })}
+        onDelete={(id) => {
+          if (selectedDoc?.id === id) setSelectedDoc(null);
+        }}
       />
       <div className="flex-1 flex flex-col">
         {selectedDoc ? (
-          <ChatWindow docId={selectedDoc.id} docName={selectedDoc.name} />
+          <ChatWindow
+            docId={selectedDoc.id}
+            docName={selectedDoc.name}
+            onBack={() => setSelectedDoc(null)}
+          />
         ) : (
           <div className="flex-1 flex flex-col">
             <header className="bg-white border-b border-gray-200 px-6 py-3">

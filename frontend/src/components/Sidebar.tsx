@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { listDocuments, uploadPDF } from '../lib/api';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { listDocuments, uploadPDF, deleteDocument } from '../lib/api';
 import { ProgressBar } from './ProgressBar';
 
 interface Doc {
@@ -16,53 +16,55 @@ interface Doc {
 interface SidebarProps {
   selectedId: string | null;
   onSelect: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
 }
 
-export function Sidebar({ selectedId, onSelect }: SidebarProps) {
+export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  // Track deleted IDs to filter out stale poll responses
+  const deletedIdsRef = useRef<Set<string>>(new Set());
 
-    const fetchDocs = async () => {
-      try {
-        const data = await listDocuments();
-        if (!cancelled) {
-          setDocs((prev) => {
-            return data.map((fresh: any) => {
-              const existing = prev.find((p) => p.id === fresh.id);
-              const progress = (() => {
-                if (fresh.status === 'ready') return 100;
-                if (fresh.status === 'failed') return existing?.progress ?? 0;
-                if (fresh.status === 'indexing') return Math.min(existing?.progress ?? 30, 95);
-                return existing?.progress ?? 5;
-              })();
-              return { ...fresh, progress };
-            });
-          });
-          setLoading(false);
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          setError(e.message);
-          setLoading(false);
-        }
-      }
-    };
+  // --- Refresh from backend ---
+  const refreshDocs = useCallback(async () => {
+    try {
+      const data: any[] = await listDocuments();
 
-    fetchDocs();
-    const interval = setInterval(fetchDocs, 3000);
+      // Filter out any docs we've deleted optimistically but backend hasn't processed yet
+      const filtered = data.filter((d) => !deletedIdsRef.current.has(d.id));
 
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+      setDocs((prev) => {
+        return filtered.map((fresh) => {
+          const existing = prev.find((p) => p.id === fresh.id);
+          const progress = (() => {
+            if (fresh.status === 'ready') return 100;
+            if (fresh.status === 'failed') return existing?.progress ?? 0;
+            if (fresh.status === 'indexing') return Math.min(existing?.progress ?? 30, 95);
+            return existing?.progress ?? 5;
+          })();
+          return { ...fresh, progress };
+        });
+      });
+      setLoading(false);
+    } catch (e: any) {
+      setError(e.message);
+      setLoading(false);
+    }
   }, []);
 
+  // --- Polling ---
+  useEffect(() => {
+    refreshDocs();
+    const interval = setInterval(refreshDocs, 3000);
+    return () => clearInterval(interval);
+  }, [refreshDocs]);
+
+  // --- Progress simulation while indexing ---
   useEffect(() => {
     const ticking = setInterval(() => {
       setDocs((prev) =>
@@ -76,10 +78,10 @@ export function Sidebar({ selectedId, onSelect }: SidebarProps) {
         })
       );
     }, 2000);
-
     return () => clearInterval(ticking);
   }, []);
 
+  // --- Upload ---
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -92,6 +94,7 @@ export function Sidebar({ selectedId, onSelect }: SidebarProps) {
     setUploading(true);
     setError(null);
 
+    // 1. Optimistic insert (so it shows instantly)
     const tempId = `temp-${Date.now()}`;
     const optimisticDoc: Doc = {
       id: tempId,
@@ -103,20 +106,55 @@ export function Sidebar({ selectedId, onSelect }: SidebarProps) {
       progress: 5,
     };
     setDocs((prev) => [optimisticDoc, ...prev]);
-    onSelect(tempId, file.name.replace(/\.pdf$/i, ''));
 
     try {
       const result = await uploadPDF(file);
+
+      // 2. Swap temp id for real id (no visual glitch)
       setDocs((prev) =>
-        prev.map((d) => (d.id === tempId ? { ...d, id: result.doc_id, progress: 30 } : d))
+        prev.map((d) =>
+          d.id === tempId
+            ? { ...d, id: result.doc_id, progress: 30 }
+            : d
+        )
       );
-      onSelect(result.doc_id, result.filename.replace(/\.pdf$/i, ''));
+
+      // 3. Force refresh so polling doesn't clobber the state
+      await refreshDocs();
     } catch (err: any) {
       setError(err.message || 'Upload failed');
       setDocs((prev) => prev.filter((d) => d.id !== tempId));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // --- Delete ---
+  const handleDelete = async (doc: Doc, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${doc.name}"? This cannot be undone.`)) return;
+
+    setDeletingId(doc.id);
+
+    // 1. Mark as deleted (blocks any poll from resurrecting it)
+    deletedIdsRef.current.add(doc.id);
+
+    // 2. Optimistic remove
+    setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+    onDelete(doc.id);
+
+    try {
+      await deleteDocument(doc.id);
+      // 3. After success, allow future polls to fully reflect backend truth
+      // (doc is actually gone from backend; keeping in deletedIds is harmless)
+    } catch (err: any) {
+      // Failed → undo optimistic remove
+      deletedIdsRef.current.delete(doc.id);
+      setError(`Delete failed: ${err.message}`);
+      await refreshDocs();
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -183,13 +221,12 @@ export function Sidebar({ selectedId, onSelect }: SidebarProps) {
           Documents ({docs.length})
         </div>
 
-        {loading && (
-          <div className="text-sm text-gray-400 px-2 py-2">Loading...</div>
-        )}
+        {loading && <div className="text-sm text-gray-400 px-2 py-2">Loading...</div>}
 
         {!loading && docs.length === 0 && (
           <div className="text-sm text-gray-400 px-2 py-4 text-center">
-            No documents yet.<br />
+            No documents yet.
+            <br />
             Upload one to get started.
           </div>
         )}
@@ -199,46 +236,50 @@ export function Sidebar({ selectedId, onSelect }: SidebarProps) {
             doc.status === 'indexing' ||
             doc.status === 'pending' ||
             doc.status === 'failed';
+          const isDeleting = deletingId === doc.id;
 
           return (
-            <button
+            <div
               key={doc.id}
-              onClick={() => doc.status === 'ready' && onSelect(doc.id, doc.name)}
-              disabled={doc.status !== 'ready'}
-              className={`w-full text-left px-3 py-2 rounded-lg mb-1 transition-colors ${
+              className={`group relative w-full text-left px-3 py-2 rounded-lg mb-1 transition-colors ${
                 selectedId === doc.id && doc.status === 'ready'
                   ? 'bg-blue-600 text-white'
                   : doc.status === 'ready'
                   ? 'hover:bg-gray-800 text-gray-200 cursor-pointer'
-                  : 'text-gray-400 cursor-default opacity-90'
-              }`}
+                  : 'text-gray-400 opacity-90'
+              } ${isDeleting ? 'opacity-50' : ''}`}
+              onClick={() => doc.status === 'ready' && onSelect(doc.id, doc.name)}
+              role={doc.status === 'ready' ? 'button' : undefined}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm truncate flex-1" title={doc.name}>
                   {doc.name}
                 </span>
                 {statusBadge(doc)}
+                <button
+                  onClick={(e) => handleDelete(doc, e)}
+                  disabled={isDeleting}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-300 disabled:opacity-50"
+                  title="Delete document"
+                  aria-label="Delete document"
+                >
+                  {isDeleting ? '⏳' : '🗑️'}
+                </button>
               </div>
               {showProgress && (
                 <div className="flex items-center gap-2 mt-1">
-                  <ProgressBar
-                    progress={doc.progress ?? 0}
-                    status={doc.status}
-                  />
+                  <ProgressBar progress={doc.progress ?? 0} status={doc.status} />
                   <span className="text-xs text-gray-400 w-8 text-right">
                     {Math.round(doc.progress ?? 0)}%
                   </span>
                 </div>
               )}
               {doc.status === 'failed' && doc.error_message && (
-                <div
-                  className="text-xs text-red-300 mt-1 truncate"
-                  title={doc.error_message}
-                >
+                <div className="text-xs text-red-300 mt-1 truncate" title={doc.error_message}>
                   {doc.error_message}
                 </div>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
