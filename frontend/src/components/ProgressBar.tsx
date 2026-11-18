@@ -1,5 +1,5 @@
 interface ProgressBarProps {
-  progress: number;  // 0-100
+  progress: number;
   status: 'pending' | 'indexing' | 'ready' | 'failed';
 }
 
@@ -11,10 +11,7 @@ export function ProgressBar({ progress, status }: ProgressBarProps) {
       ? 'bg-green-500'
       : 'bg-blue-500';
 
-  const bgColor =
-    status === 'failed'
-      ? 'bg-red-900/30'
-      : 'bg-gray-700';
+  const bgColor = status === 'failed' ? 'bg-red-900/30' : 'bg-gray-700';
 
   return (
     <div className={`w-full h-1.5 ${bgColor} rounded-full overflow-hidden mt-1`}>

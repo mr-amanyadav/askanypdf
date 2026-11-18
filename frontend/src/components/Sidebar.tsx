@@ -13,15 +13,18 @@ interface Doc {
   progress?: number;
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  selectedId: string | null;
+  onSelect: (id: string, name: string) => void;
+}
+
+export function Sidebar({ selectedId, onSelect }: SidebarProps) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Polling for status ---
   useEffect(() => {
     let cancelled = false;
 
@@ -30,7 +33,6 @@ export function Sidebar() {
         const data = await listDocuments();
         if (!cancelled) {
           setDocs((prev) => {
-            // Merge fetched statuses with existing progress values
             return data.map((fresh: any) => {
               const existing = prev.find((p) => p.id === fresh.id);
               const progress = (() => {
@@ -53,7 +55,7 @@ export function Sidebar() {
     };
 
     fetchDocs();
-    const interval = setInterval(fetchDocs, 3000); // faster polling
+    const interval = setInterval(fetchDocs, 3000);
 
     return () => {
       cancelled = true;
@@ -61,13 +63,11 @@ export function Sidebar() {
     };
   }, []);
 
-  // --- Progress simulation (ticks every 2s while indexing) ---
   useEffect(() => {
     const ticking = setInterval(() => {
       setDocs((prev) =>
         prev.map((d) => {
           if (d.status === 'indexing') {
-            // Slow crawl from current toward 95%
             const current = d.progress ?? 30;
             const next = current + (95 - current) * 0.08;
             return { ...d, progress: Math.min(next, 95) };
@@ -103,22 +103,16 @@ export function Sidebar() {
       progress: 5,
     };
     setDocs((prev) => [optimisticDoc, ...prev]);
-    setSelectedId(tempId);
+    onSelect(tempId, file.name.replace(/\.pdf$/i, ''));
 
     try {
       const result = await uploadPDF(file);
-      // Replace the temp doc with the real one
       setDocs((prev) =>
-        prev.map((d) =>
-          d.id === tempId
-            ? { ...d, id: result.doc_id, progress: 30 }
-            : d
-        )
+        prev.map((d) => (d.id === tempId ? { ...d, id: result.doc_id, progress: 30 } : d))
       );
-      setSelectedId(result.doc_id);
+      onSelect(result.doc_id, result.filename.replace(/\.pdf$/i, ''));
     } catch (err: any) {
       setError(err.message || 'Upload failed');
-      // Remove the temp doc on failure
       setDocs((prev) => prev.filter((d) => d.id !== tempId));
     } finally {
       setUploading(false);
@@ -157,12 +151,10 @@ export function Sidebar() {
 
   return (
     <aside className="w-72 bg-gray-900 text-white flex flex-col h-screen">
-      {/* Header */}
       <div className="p-4 border-b border-gray-800">
         <h1 className="text-lg font-bold">📄 AskAnyPDF</h1>
       </div>
 
-      {/* Upload button */}
       <div className="p-4 border-b border-gray-800">
         <input
           ref={fileInputRef}
@@ -186,7 +178,6 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Document list */}
       <div className="flex-1 overflow-y-auto p-2">
         <div className="text-xs text-gray-400 px-2 py-2 uppercase tracking-wide">
           Documents ({docs.length})
@@ -212,7 +203,7 @@ export function Sidebar() {
           return (
             <button
               key={doc.id}
-              onClick={() => doc.status === 'ready' && setSelectedId(doc.id)}
+              onClick={() => doc.status === 'ready' && onSelect(doc.id, doc.name)}
               disabled={doc.status !== 'ready'}
               className={`w-full text-left px-3 py-2 rounded-lg mb-1 transition-colors ${
                 selectedId === doc.id && doc.status === 'ready'
@@ -229,10 +220,15 @@ export function Sidebar() {
                 {statusBadge(doc)}
               </div>
               {showProgress && (
-                <ProgressBar
-                  progress={doc.progress ?? 0}
-                  status={doc.status}
-                />
+                <div className="flex items-center gap-2 mt-1">
+                  <ProgressBar
+                    progress={doc.progress ?? 0}
+                    status={doc.status}
+                  />
+                  <span className="text-xs text-gray-400 w-8 text-right">
+                    {Math.round(doc.progress ?? 0)}%
+                  </span>
+                </div>
               )}
               {doc.status === 'failed' && doc.error_message && (
                 <div
@@ -247,7 +243,6 @@ export function Sidebar() {
         })}
       </div>
 
-      {/* Footer */}
       <div className="p-3 border-t border-gray-800 text-xs text-gray-500">
         Powered by MHier-RAG
       </div>

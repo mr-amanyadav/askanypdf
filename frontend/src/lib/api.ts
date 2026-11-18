@@ -46,4 +46,53 @@ export async function deleteDocument(docId: string) {
   return res.json();
 }
 
+export interface StreamEvent {
+  type: 'token' | 'done' | 'error';
+  content?: string;
+  answer?: string;
+  top_pages?: number[];
+  num_candidates?: number;
+  message?: string;
+}
+
+export async function* streamAnswer(
+  docId: string,
+  question: string
+): AsyncGenerator<StreamEvent> {
+  const headers = await getAuthHeader();
+  const res = await fetch(`${API_URL}/query/ask`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ doc_id: docId, question }),
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`Query failed: ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const json = line.slice(6).trim();
+      if (!json) continue;
+      try {
+        yield JSON.parse(json) as StreamEvent;
+      } catch {
+        // ignore malformed lines
+      }
+    }
+  }
+}
+
 export { API_URL };
