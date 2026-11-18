@@ -38,7 +38,10 @@ export async function getDocument(docId: string) {
 
 export async function deleteDocument(docId: string) {
   const headers = await getAuthHeader();
-  const res = await fetch(`${API_URL}/documents/${docId}`, { method: 'DELETE', headers });
+  const res = await fetch(`${API_URL}/documents/${docId}`, {
+    method: 'DELETE',
+    headers,
+  });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
   return res.json();
 }
