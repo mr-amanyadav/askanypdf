@@ -10,7 +10,7 @@ function AppContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="h-screen flex items-center justify-center">
         <div className="text-gray-500">Loading...</div>
       </div>
     );
@@ -19,7 +19,7 @@ function AppContent() {
   if (!user) return <Login />;
 
   return (
-    <div className="min-h-screen flex bg-gray-50">
+    <div className="h-screen flex bg-gray-50 overflow-hidden">
       <Sidebar
         selectedId={selectedDoc?.id ?? null}
         onSelect={(id, name) => setSelectedDoc({ id, name })}
@@ -27,7 +27,7 @@ function AppContent() {
           if (selectedDoc?.id === id) setSelectedDoc(null);
         }}
       />
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {selectedDoc ? (
           <ChatWindow
             docId={selectedDoc.id}
@@ -50,7 +50,7 @@ function AppContent() {
                 </div>
               </div>
             </header>
-            <div className="flex-1 flex items-center justify-center p-8">
+            <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
               <div className="text-center">
                 <div className="text-6xl mb-4">📄</div>
                 <h2 className="text-2xl font-semibold text-gray-900 mb-2">

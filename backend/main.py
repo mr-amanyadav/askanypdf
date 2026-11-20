@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from db.auth import get_current_user
 from routers import documents
-from routers import documents, query
+from routers import documents, query, chats
 
 
 app = FastAPI(title="AskAnyPDF API", version="0.1.0")
@@ -17,6 +17,7 @@ app.add_middleware(
 
 app.include_router(documents.router)
 app.include_router(query.router)  
+app.include_router(chats.router)
 
 @app.get("/health")
 def health():

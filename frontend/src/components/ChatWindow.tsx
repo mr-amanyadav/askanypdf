@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { streamAnswer } from '../lib/api';
+import { streamAnswer, getChatMessages, saveMessage } from '../lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -7,6 +7,7 @@ interface Message {
   topPages?: number[];
   numCandidates?: number;
   streaming?: boolean;
+  tempId?: string;
 }
 
 interface Props {
@@ -19,13 +20,41 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Load chat history when doc changes
   useEffect(() => {
+    let cancelled = false;
+    setLoadingHistory(true);
     setMessages([]);
-    setInput('');
+
+    (async () => {
+      try {
+        const history = await getChatMessages(docId);
+        if (cancelled) return;
+
+        const loaded: Message[] = history.map((m) => ({
+          role: m.role,
+          content: m.content,
+          topPages: m.citations?.top_pages,
+          numCandidates: m.citations?.num_candidates,
+          streaming: false,
+        }));
+        setMessages(loaded);
+      } catch (err) {
+        console.error('Failed to load chat history:', err);
+      } finally {
+        if (!cancelled) setLoadingHistory(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [docId]);
 
+  // Auto-scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -38,11 +67,17 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
     setInput('');
     setBusy(true);
 
+    // 1. Add user message + empty assistant placeholder to state
     setMessages((prev) => [
       ...prev,
       { role: 'user', content: question },
       { role: 'assistant', content: '', streaming: true },
     ]);
+
+    // 2. Save user message to DB (fire-and-forget)
+    saveMessage(docId, 'user', question).catch((err) =>
+      console.error('Failed to save user message:', err)
+    );
 
     try {
       let assistantContent = '';
@@ -76,6 +111,18 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
           throw new Error(event.message || 'Stream error');
         }
       }
+
+      // 3. Save assistant message to DB after streaming completes
+      if (assistantContent) {
+        saveMessage(
+          docId,
+          'assistant',
+          assistantContent,
+          topPages
+            ? { top_pages: topPages, num_candidates: numCandidates ?? 0 }
+            : null
+        ).catch((err) => console.error('Failed to save assistant message:', err));
+      }
     } catch (err: any) {
       setMessages((prev) => {
         const updated = [...prev];
@@ -103,14 +150,12 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-screen bg-gray-50">
-      {/* Header with back button */}
+    <div className="flex-1 flex flex-col bg-gray-50 overflow-hidden">
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
             className="text-gray-500 hover:text-gray-900 flex items-center gap-1 text-sm font-medium px-2 py-1 rounded hover:bg-gray-100 transition-colors"
-            aria-label="Back to documents"
           >
             ← Back
           </button>
@@ -123,7 +168,11 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {messages.length === 0 && (
+        {loadingHistory && (
+          <div className="text-center text-gray-400 mt-8 text-sm">Loading chat history...</div>
+        )}
+
+        {!loadingHistory && messages.length === 0 && (
           <div className="text-center text-gray-400 mt-16">
             <div className="text-5xl mb-3">💬</div>
             <p className="text-lg">Ask your first question</p>

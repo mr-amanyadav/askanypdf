@@ -94,5 +94,37 @@ export async function* streamAnswer(
     }
   }
 }
+export interface ChatMessage {
+  id: string;
+  chat_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: { top_pages?: number[]; num_candidates?: number } | null;
+  metadata?: any;
+  created_at: string;
+}
+
+export async function getChatMessages(docId: string): Promise<ChatMessage[]> {
+  const headers = await getAuthHeader();
+  const res = await fetch(`${API_URL}/chats/${docId}/messages`, { headers });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
+export async function saveMessage(
+  docId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  citations?: { top_pages: number[]; num_candidates: number } | null
+): Promise<ChatMessage> {
+  const headers = await getAuthHeader();
+  const res = await fetch(`${API_URL}/chats/${docId}/messages`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role, content, citations }),
+  });
+  if (!res.ok) throw new Error(`Save failed: ${res.status}`);
+  return res.json();
+}
 
 export { API_URL };
