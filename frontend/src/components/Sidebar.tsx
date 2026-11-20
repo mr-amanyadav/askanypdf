@@ -26,17 +26,16 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Track deleted IDs to filter out stale poll responses
   const deletedIdsRef = useRef<Set<string>>(new Set());
 
-  // --- Refresh from backend ---
   const refreshDocs = useCallback(async () => {
+    if (signedOut) return;
+
     try {
       const data: any[] = await listDocuments();
-
-      // Filter out any docs we've deleted optimistically but backend hasn't processed
       const filtered = data.filter((d) => !deletedIdsRef.current.has(d.id));
 
       setDocs((prev) => {
@@ -54,25 +53,27 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
       setLoading(false);
       setError(null);
     } catch (e: any) {
-      // Auto sign-out on 401 / expired session
-      if (e.message?.includes('401') || e.message?.includes('Not authenticated') || e.message?.includes('Session expired')) {
+      if (
+        e.message?.includes('401') ||
+        e.message?.includes('Not authenticated') ||
+        e.message?.includes('Session expired')
+      ) {
         console.warn('[auth] Session expired, signing out');
+        setSignedOut(true);
         await supabase.auth.signOut();
         return;
       }
       setError(e.message);
       setLoading(false);
     }
-  }, []);
+  }, [signedOut]);
 
-  // --- Polling ---
   useEffect(() => {
     refreshDocs();
     const interval = setInterval(refreshDocs, 3000);
     return () => clearInterval(interval);
   }, [refreshDocs]);
 
-  // --- Progress simulation while indexing ---
   useEffect(() => {
     const ticking = setInterval(() => {
       setDocs((prev) =>
@@ -89,7 +90,6 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
     return () => clearInterval(ticking);
   }, []);
 
-  // --- Upload ---
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -102,7 +102,6 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
     setUploading(true);
     setError(null);
 
-    // 1. Optimistic insert (instant UI feedback)
     const tempId = `temp-${Date.now()}`;
     const optimisticDoc: Doc = {
       id: tempId,
@@ -117,15 +116,11 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
 
     try {
       const result = await uploadPDF(file);
-
-      // 2. Swap temp ID for real ID
       setDocs((prev) =>
         prev.map((d) =>
           d.id === tempId ? { ...d, id: result.doc_id, progress: 30 } : d
         )
       );
-
-      // 3. Force refresh so polling sees the real doc
       await refreshDocs();
     } catch (err: any) {
       setError(err.message || 'Upload failed');
@@ -136,7 +131,6 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
     }
   };
 
-  // --- Delete ---
   const handleDelete = async (doc: Doc, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm(`Delete "${doc.name}"? This cannot be undone.`)) return;

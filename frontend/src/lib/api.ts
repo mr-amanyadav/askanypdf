@@ -3,24 +3,27 @@ import { supabase } from './supabase';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 async function getAuthHeader(): Promise<{ Authorization: string }> {
-  const { data: { session } } = await supabase.auth.getSession();
+  let { data: { session } } = await supabase.auth.getSession();
 
   if (!session) {
     throw new Error('Not authenticated — please log in again');
   }
 
-  // Check if token expires within 60 seconds; refresh proactively
   const expiresAt = session.expires_at ?? 0;
   const now = Math.floor(Date.now() / 1000);
-  const needsRefresh = expiresAt - now < 60;
-
-  if (needsRefresh) {
-    console.log('[auth] Token near expiry, refreshing...');
+  
+  if (expiresAt - now < 60) {
+    console.log('[auth] Token expired or expiring soon, refreshing...');
     const { data: { session: refreshed }, error } = await supabase.auth.refreshSession();
+    
     if (error || !refreshed) {
+      console.warn('[auth] Refresh failed, signing out:', error);
+      await supabase.auth.signOut();
       throw new Error('Session expired — please log in again');
     }
-    return { Authorization: `Bearer ${refreshed.access_token}` };
+    
+    session = refreshed;
+    console.log('[auth] Refreshed OK');
   }
 
   return { Authorization: `Bearer ${session.access_token}` };
