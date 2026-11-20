@@ -3,10 +3,27 @@ import { supabase } from './supabase';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 async function getAuthHeader(): Promise<{ Authorization: string }> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error('Not authenticated');
-  return { Authorization: `Bearer ${token}` };
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session) {
+    throw new Error('Not authenticated — please log in again');
+  }
+
+  // Check if token expires within 60 seconds; refresh proactively
+  const expiresAt = session.expires_at ?? 0;
+  const now = Math.floor(Date.now() / 1000);
+  const needsRefresh = expiresAt - now < 60;
+
+  if (needsRefresh) {
+    console.log('[auth] Token near expiry, refreshing...');
+    const { data: { session: refreshed }, error } = await supabase.auth.refreshSession();
+    if (error || !refreshed) {
+      throw new Error('Session expired — please log in again');
+    }
+    return { Authorization: `Bearer ${refreshed.access_token}` };
+  }
+
+  return { Authorization: `Bearer ${session.access_token}` };
 }
 
 export async function listDocuments() {
@@ -94,6 +111,7 @@ export async function* streamAnswer(
     }
   }
 }
+
 export interface ChatMessage {
   id: string;
   chat_id: string;

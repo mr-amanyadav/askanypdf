@@ -7,7 +7,6 @@ interface Message {
   topPages?: number[];
   numCandidates?: number;
   streaming?: boolean;
-  tempId?: string;
 }
 
 interface Props {
@@ -23,7 +22,7 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load chat history when doc changes
+  // Load chat history on doc change
   useEffect(() => {
     let cancelled = false;
     setLoadingHistory(true);
@@ -33,7 +32,6 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
       try {
         const history = await getChatMessages(docId);
         if (cancelled) return;
-
         const loaded: Message[] = history.map((m) => ({
           role: m.role,
           content: m.content,
@@ -54,7 +52,7 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
     };
   }, [docId]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -67,14 +65,13 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
     setInput('');
     setBusy(true);
 
-    // 1. Add user message + empty assistant placeholder to state
     setMessages((prev) => [
       ...prev,
       { role: 'user', content: question },
       { role: 'assistant', content: '', streaming: true },
     ]);
 
-    // 2. Save user message to DB (fire-and-forget)
+    // Save user message (fire and forget)
     saveMessage(docId, 'user', question).catch((err) =>
       console.error('Failed to save user message:', err)
     );
@@ -112,15 +109,13 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
         }
       }
 
-      // 3. Save assistant message to DB after streaming completes
+      // Save assistant message after stream ends
       if (assistantContent) {
         saveMessage(
           docId,
           'assistant',
           assistantContent,
-          topPages
-            ? { top_pages: topPages, num_candidates: numCandidates ?? 0 }
-            : null
+          topPages ? { top_pages: topPages, num_candidates: numCandidates ?? 0 } : null
         ).catch((err) => console.error('Failed to save assistant message:', err));
       }
     } catch (err: any) {
@@ -151,7 +146,7 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
 
   return (
     <div className="flex-1 flex flex-col bg-gray-50 overflow-hidden">
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
@@ -220,7 +215,10 @@ export function ChatWindow({ docId, docName, onBack }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="bg-white border-t border-gray-200 px-6 py-4">
+      <form
+        onSubmit={handleSubmit}
+        className="bg-white border-t border-gray-200 px-6 py-4 flex-shrink-0"
+      >
         <div className="flex gap-2 max-w-4xl mx-auto">
           <input
             type="text"

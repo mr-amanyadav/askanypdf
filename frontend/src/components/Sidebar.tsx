@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { listDocuments, uploadPDF, deleteDocument } from '../lib/api';
 import { ProgressBar } from './ProgressBar';
+import { supabase } from '../lib/supabase';
 
 interface Doc {
   id: string;
@@ -35,7 +36,7 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
     try {
       const data: any[] = await listDocuments();
 
-      // Filter out any docs we've deleted optimistically but backend hasn't processed yet
+      // Filter out any docs we've deleted optimistically but backend hasn't processed
       const filtered = data.filter((d) => !deletedIdsRef.current.has(d.id));
 
       setDocs((prev) => {
@@ -51,7 +52,14 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
         });
       });
       setLoading(false);
+      setError(null);
     } catch (e: any) {
+      // Auto sign-out on 401 / expired session
+      if (e.message?.includes('401') || e.message?.includes('Not authenticated') || e.message?.includes('Session expired')) {
+        console.warn('[auth] Session expired, signing out');
+        await supabase.auth.signOut();
+        return;
+      }
       setError(e.message);
       setLoading(false);
     }
@@ -94,7 +102,7 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
     setUploading(true);
     setError(null);
 
-    // 1. Optimistic insert (so it shows instantly)
+    // 1. Optimistic insert (instant UI feedback)
     const tempId = `temp-${Date.now()}`;
     const optimisticDoc: Doc = {
       id: tempId,
@@ -110,16 +118,14 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
     try {
       const result = await uploadPDF(file);
 
-      // 2. Swap temp id for real id (no visual glitch)
+      // 2. Swap temp ID for real ID
       setDocs((prev) =>
         prev.map((d) =>
-          d.id === tempId
-            ? { ...d, id: result.doc_id, progress: 30 }
-            : d
+          d.id === tempId ? { ...d, id: result.doc_id, progress: 30 } : d
         )
       );
 
-      // 3. Force refresh so polling doesn't clobber the state
+      // 3. Force refresh so polling sees the real doc
       await refreshDocs();
     } catch (err: any) {
       setError(err.message || 'Upload failed');
@@ -136,20 +142,13 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
     if (!confirm(`Delete "${doc.name}"? This cannot be undone.`)) return;
 
     setDeletingId(doc.id);
-
-    // 1. Mark as deleted (blocks any poll from resurrecting it)
     deletedIdsRef.current.add(doc.id);
-
-    // 2. Optimistic remove
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));
     onDelete(doc.id);
 
     try {
       await deleteDocument(doc.id);
-      // 3. After success, allow future polls to fully reflect backend truth
-      // (doc is actually gone from backend; keeping in deletedIds is harmless)
     } catch (err: any) {
-      // Failed → undo optimistic remove
       deletedIdsRef.current.delete(doc.id);
       setError(`Delete failed: ${err.message}`);
       await refreshDocs();
@@ -188,12 +187,12 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
   };
 
   return (
-    <aside className="w-72 bg-gray-900 text-white flex flex-col h-screen">
-      <div className="p-4 border-b border-gray-800">
+    <aside className="w-72 bg-gray-900 text-white flex flex-col h-screen flex-shrink-0">
+      <div className="p-4 border-b border-gray-800 flex-shrink-0">
         <h1 className="text-lg font-bold">📄 AskAnyPDF</h1>
       </div>
 
-      <div className="p-4 border-b border-gray-800">
+      <div className="p-4 border-b border-gray-800 flex-shrink-0">
         <input
           ref={fileInputRef}
           type="file"
@@ -284,7 +283,7 @@ export function Sidebar({ selectedId, onSelect, onDelete }: SidebarProps) {
         })}
       </div>
 
-      <div className="p-3 border-t border-gray-800 text-xs text-gray-500">
+      <div className="p-3 border-t border-gray-800 text-xs text-gray-500 flex-shrink-0">
         Powered by MHier-RAG
       </div>
     </aside>
